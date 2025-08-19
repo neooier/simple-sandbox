@@ -28,12 +28,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
+          cache: yarn
+
+      - name: Install Yarn
+        run: npm i -g yarn
 
       - name: Install dependencies (no lifecycle scripts)
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: yarn install --frozen-lockfile --ignore-scripts --non-interactive
 
       - name: Build
-        run: npm run build
+        run: yarn build
 
       - name: Read version from package.json
         id: pkg
