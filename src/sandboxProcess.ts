@@ -49,7 +49,9 @@ export class SandboxProcess {
                 let current = new Date().getTime();
                 const spent = current - lastCheck;
                 lastCheck = current;
-                const val: number = Number(sandboxAddon.GetCgroupProperty("cpuacct", myFather.parameter.cgroup, "cpuacct.usage"));
+                // cgroup v2: cpu.stat 中的 usage_usec（微秒），换算为纳秒
+                const usageUsec: number = Number(sandboxAddon.GetCgroupProperty2("unified", myFather.parameter.cgroup, "cpu.stat", "usage_usec"));
+                const val: number = usageUsec * 1000;
                 myFather.countedCpuTime += Math.max(
                     val - myFather.actualCpuTime,            // The real time, or if less than 40%,
                     utils.milliToNano(spent) * 0.4 // 40% of actually elapsed time
@@ -72,11 +74,13 @@ export class SandboxProcess {
                     myFather.cleanup();
                     rej(err);
                 } else {
-                    const memUsageWithCache: number = Number(sandboxAddon.GetCgroupProperty("memory", myFather.parameter.cgroup, "memory.memsw.max_usage_in_bytes"));
-                    const cache: number = Number(sandboxAddon.GetCgroupProperty2("memory", myFather.parameter.cgroup, "memory.stat", "cache"));
-                    const memUsage = memUsageWithCache - cache;
+                    // v2: memory.current 为当前用量；memory.peak 为峰值（优先使用）
+                    const peak: number = Number(sandboxAddon.GetCgroupProperty("unified", myFather.parameter.cgroup, "memory.peak"));
+                    const current: number = Number(sandboxAddon.GetCgroupProperty("unified", myFather.parameter.cgroup, "memory.current"));
+                    const memUsage = Number.isNaN(peak) ? current : peak;
 
-                    myFather.actualCpuTime = Number(sandboxAddon.GetCgroupProperty("cpuacct", myFather.parameter.cgroup, "cpuacct.usage"));
+                    // v2: cpu.stat usage_usec -> 纳秒
+                    myFather.actualCpuTime = Number(sandboxAddon.GetCgroupProperty2("unified", myFather.parameter.cgroup, "cpu.stat", "usage_usec")) * 1000;
                     myFather.cleanup();
 
                     let result: SandboxResult = {
@@ -105,9 +109,8 @@ export class SandboxProcess {
     }
 
     private removeCgroup(): void {
-        Promise.all([removeCgroup("memory", this.parameter.cgroup),
-        removeCgroup("cpuacct", this.parameter.cgroup),
-        removeCgroup("pids", this.parameter.cgroup)])
+        // v2: 统一层级，仅需删除一次
+        Promise.all([removeCgroup("unified", this.parameter.cgroup)])
             .then(() => { this.cleanupCallback(); }, (err) => { this.cleanupErrCallback(err); });
     }
 

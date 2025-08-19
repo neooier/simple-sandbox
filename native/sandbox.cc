@@ -278,17 +278,12 @@ pid_t StartSandbox(const SandboxParameter &parameter
                                      CLONE_NEWNET | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS | SIGCHLD,
                                      const_cast<void *>(reinterpret_cast<const void *>(&execParam))));
 
-        CgroupInfo memInfo("memory", parameter.cgroupName),
-            cpuInfo("cpuacct", parameter.cgroupName),
-            pidInfo("pids", parameter.cgroupName);
-
-        vector<CgroupInfo *> infos = {&memInfo, &cpuInfo, &pidInfo};
-        for (auto &item : infos)
-        {
-            CreateGroup(*item);
-            KillGroupMembers(*item);
-            WriteGroupProperty(*item, "tasks", container_pid);
-        }
+        // cgroup v2: 统一层级
+        CgroupInfo unifiedInfo("unified", parameter.cgroupName);
+        CreateGroup(unifiedInfo);
+        KillGroupMembers(unifiedInfo);
+        // 将进程加入该 cgroup
+        WriteGroupProperty(unifiedInfo, "cgroup.procs", container_pid);
 
 #define WRITE_WITH_CHECK(__where, __name, __value)                  \
     {                                                               \
@@ -302,13 +297,17 @@ pid_t StartSandbox(const SandboxParameter &parameter
         }                                                           \
     }
 
-        // Forcibly clear any memory usage by cache.
-        // WriteGroupProperty(memInfo, "memory.force_empty", 0); // This is too slow!!!!
-        WriteGroupProperty(memInfo, "memory.memsw.limit_in_bytes", -1);
-        WriteGroupProperty(memInfo, "memory.limit_in_bytes", -1);
-        WRITE_WITH_CHECK(memInfo, "memory.limit_in_bytes", parameter.memoryLimit);
-        WRITE_WITH_CHECK(memInfo, "memory.memsw.limit_in_bytes", parameter.memoryLimit);
-        WRITE_WITH_CHECK(pidInfo, "pids.max", parameter.processLimit);
+        // 设置限制（v2）
+        // memory.max：内存限制；memory.swap.max：交换区限制（与 v1 语义不同，这里若设置内存限制则禁止 swap）
+        WRITE_WITH_CHECK(unifiedInfo, "memory.max", -1);
+        WRITE_WITH_CHECK(unifiedInfo, "memory.swap.max", -1);
+        if (parameter.memoryLimit >= 0)
+        {
+            WriteGroupProperty(unifiedInfo, "memory.max", parameter.memoryLimit);
+            // 禁止使用 swap，确保统计与限制一致可控
+            WriteGroupProperty(unifiedInfo, "memory.swap.max", 0);
+        }
+        WRITE_WITH_CHECK(unifiedInfo, "pids.max", parameter.processLimit);
 
         // Wait for at most 100ms. If the child process hasn't posted the semaphore,
         // We will assume that the child has already dead.
@@ -329,9 +328,7 @@ pid_t StartSandbox(const SandboxParameter &parameter
             throw std::runtime_error((format("The child process has reported the following error: {}", errstr)));
         }
 
-        // Clear usage stats.
-        WriteGroupProperty(memInfo, "memory.memsw.max_usage_in_bytes", 0);
-        WriteGroupProperty(cpuInfo, "cpuacct.usage", 0);
+        // v2 无法重置 memory.peak 或 cpu 统计；每次创建独立 cgroup 即可保证统计从 0 开始
 
         // Continue the child.
         execParam.semaphore2.Post();

@@ -240,7 +240,8 @@ NAN_METHOD(GetCgroupProperty2)
     int64_t val;
     try
     {
-        CgroupInfo cginfo(controllerName, cgroupName);
+        // 在 v2 中统一从 unified 路径读取
+        CgroupInfo cginfo(controllerName == "unified" ? controllerName : string("unified"), cgroupName);
         val = ReadGroupPropertyMap(cginfo, propertyName)[subPropertyName];
     }
     catch (std::exception &ex)
@@ -248,7 +249,6 @@ NAN_METHOD(GetCgroupProperty2)
         ThrowTypeError(ex.what());
         return;
     }
-    // v8 doesn't support 64-bit integer, so let's use string.
     info.GetReturnValue().Set(STR(std::to_string(val)));
 }
 
@@ -260,7 +260,8 @@ NAN_METHOD(GetCgroupProperty)
     uint64_t val;
     try
     {
-        CgroupInfo cginfo(controllerName, cgroupName);
+        // 在 v2 中统一从 unified 路径读取
+        CgroupInfo cginfo(controllerName == "unified" ? controllerName : string("unified"), cgroupName);
         val = ReadGroupProperty(cginfo, propertyName);
     }
     catch (std::exception &ex)

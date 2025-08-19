@@ -50,49 +50,56 @@ CgroupInfo::CgroupInfo(const string &controller, const string &group)
     }
 }
 
-// This piece of code is copied from libcgroup but translated to C++. C++ is very great.
+// 使用 cgroup v2（统一层级）初始化挂载点
 bool InitializeCgroup()
 {
     cgroup_mnt.clear();
     char buf[4 * FILENAME_MAX];
 
-    ifstream proc_cgroup("/proc/cgroups");
-    // The first line is ignored.
-    proc_cgroup.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-    vector<string> controllers;
-    string subsys_name;
-    int hierarchy, num_cgroups, enabled;
-    while (proc_cgroup >> subsys_name >> hierarchy >> num_cgroups >> enabled)
-    {
-        controllers.push_back(string(subsys_name));
-    }
-
     FILE *proc_mount = CHECKNULL(fopen("/proc/mounts", "re"));
     mntent *temp_ent = new mntent, *ent;
+    fs::path unifiedPath;
     while ((ent = getmntent_r(proc_mount, temp_ent,
                               buf,
                               sizeof(buf))) != NULL)
     {
-        if (strcmp(ent->mnt_type, "cgroup"))
-            continue;
-
-        for (auto iter = controllers.begin(); iter != controllers.end(); iter++)
+        if (strcmp(ent->mnt_type, "cgroup2") == 0)
         {
-            char *mntopt = hasmntopt(ent, iter->c_str());
-            if (!mntopt)
-                continue;
-
-            cgroup_mnt[*iter].push_back(fs::path(string(ent->mnt_dir)));
+            unifiedPath = fs::path(string(ent->mnt_dir));
+            break;
         }
     }
     delete temp_ent;
 
-    // TODO: implement RAII here. `throw` will cause file descriptor leak for now.
     if (proc_mount)
         fclose(proc_mount);
 
-    return cgroup_mnt.size() != 0;
+    if (unifiedPath.empty())
+    {
+        return false;
+    }
+
+    // 为向后兼容现有调用点（传入 memory/cpu/pids/cpuacct）建立同一路径映射
+    cgroup_mnt[string("unified")].push_back(unifiedPath);
+    cgroup_mnt[string("memory")].push_back(unifiedPath);
+    cgroup_mnt[string("cpu")].push_back(unifiedPath);
+    cgroup_mnt[string("pids")].push_back(unifiedPath);
+    cgroup_mnt[string("cpuacct")].push_back(unifiedPath);
+
+    // 尝试在根层级启用所需控制器（若已启用会被忽略）
+    try
+    {
+        ofstream ofs;
+        ofs.exceptions(std::ios::failbit | std::ios::badbit);
+        ofs.open(unifiedPath / "cgroup.subtree_control", ofstream::out | ofstream::app);
+        ofs << "+memory +pids +cpu" << std::endl;
+    }
+    catch (...)
+    {
+        // 忽略启用失败，由上层决定是否继续
+    }
+
+    return true;
 }
 
 static const fs::path &GetPath(const string &controller)
@@ -196,7 +203,8 @@ map<string, int64_t> ReadGroupPropertyMap(const CgroupInfo &info, const string &
 
 void KillGroupMembers(const CgroupInfo &info)
 {
-    auto v = ReadGroupPropertyArray(info, "tasks");
+    // cgroup v2 使用 cgroup.procs
+    auto v = ReadGroupPropertyArray(info, "cgroup.procs");
     for (auto &item : v)
     {
         ENSURE(kill((int)(item), SIGKILL));

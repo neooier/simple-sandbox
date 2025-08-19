@@ -13,20 +13,7 @@ apt install build-essential clang++-9 libfmt-dev
 ```
 
 ### Kernel
-You need to have the memory swap account (disabled by default in Debian 8) enabled with your kernel. You can verify this by checking the existence of `/sys/fs/cgroup/memory/memory.memsw.usage_in_bytes` 
-
-If that file does not exist, then you may have to turn on that with your grub.
-
-Add `swapaccount=1` to `GRUB_CMDLINE_LINUX_DEFAULT` section in `/etc/default/grub`.
-```bash
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash cgroup_enable=memory swapaccount=1"
-```
-
-And then run
-```bash
-update-grub && reboot
-```
-To enjoy the modified kernel.
+This project requires cgroup v2 (unified hierarchy). Ensure your system mounts `cgroup2` at `/sys/fs/cgroup`, and that `cpu`, `memory`, and `pids` controllers are available in `cgroup.controllers`. On many modern distributions, this is enabled by default. If needed, configure your bootloader to enable the unified cgroup hierarchy and reboot.
 
 ## Build
 Pull the repository to somewhere on your computer and run

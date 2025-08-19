@@ -5,8 +5,9 @@ import { existsSync } from 'fs';
 import * as randomString from 'randomstring';
 import * as path from 'path';
 
-if (!existsSync('/sys/fs/cgroup/memory/memory.memsw.usage_in_bytes')) {
-    throw new Error("Your linux kernel doesn't support memory-swap account. Please turn it on following the readme.");
+// cgroup v2 检查：必须存在 unified 层级
+if (!existsSync('/sys/fs/cgroup/cgroup.controllers')) {
+    throw new Error('This program requires cgroup v2 (unified hierarchy). Please enable cgroup v2.');
 }
 
 export async function startSandbox(parameter: SandboxParameter): Promise<SandboxProcess> {
